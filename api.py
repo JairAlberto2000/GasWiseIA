@@ -17,7 +17,7 @@ def custom_round(value):
     else:
         return round(value)
 
-def predict_remaining_days(z_value, mag_value):
+def predict_remaining_days(x, y, z, magnitud):
     if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError("Modelo RandomForest no encontrado.")
 
@@ -25,8 +25,10 @@ def predict_remaining_days(z_value, mag_value):
         model = pickle.load(f)
 
     input_df = pd.DataFrame([{
-        'z': z_value,
-        'magnitud': mag_value
+        'X': x,
+        'Y': y,
+        'Z': z,
+        'Magnitud': magnitud
     }])
 
     predicted_days = model.predict(input_df)[0]
@@ -37,10 +39,12 @@ def predict_remaining_days(z_value, mag_value):
 @app.route('/gas-info', methods=['GET'])
 def get_gas_info():
     try:
-        z_value = float(request.args.get('z', 3.5))
-        mag_value = float(request.args.get('magnitud', 2.7))
+        x = float(request.args.get('x'))
+        y = float(request.args.get('y'))
+        z = float(request.args.get('z'))
+        magnitud = float(request.args.get('magnitud'))
 
-        porcentaje, dias = predict_remaining_days(z_value, mag_value)
+        porcentaje, dias = predict_remaining_days(x, y, z, magnitud)
 
         return jsonify({
             "porcentaje_actual": porcentaje,

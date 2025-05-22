@@ -1,91 +1,69 @@
-import pymysql
-import pandas as pd
+import mysql.connector
 import pickle
-import os
-import math
+import pandas as pd
 from datetime import datetime
+import os
 
-# Configuración de la base de datos
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "montse",
-    "password": "123456",
-    "database_lecturas": "DBGasWise",
-    "database_resultados": "Resultados_Lecturas"
+MODEL_PATH = "/home/ubuntu/GasWiseIA/models/RandomForest.pkl"
+
+db_config = {
+    'host': 'localhost',
+    'user': 'montse',
+    'password': '123456',
+    'database': 'DBGasWise'
 }
 
-MODEL_PATH = "models/RandomForest.pkl"
+conn = mysql.connector.connect(**db_config)
+cursor = conn.cursor(dictionary=True)
 
-def custom_round(value):
-    decimal = value - int(value)
-    if decimal <= 0.5:
-        return math.floor(value)
-    elif decimal >= 0.6:
-        return math.ceil(value)
-    else:
-        return round(value)
+# Cargar modelo
+with open(MODEL_PATH, 'rb') as f:
+    model = pickle.load(f)
 
-def predict_and_save():
-    try:
-        # Conectar a la base de datos de lecturas
-        conn_lecturas = pymysql.connect(
-            host=DB_CONFIG["host"],
-            user=DB_CONFIG["montse"],
-            password=DB_CONFIG["123456"],
-            database=DB_CONFIG["database_lecturas"]
-        )
+# Obtener la última lectura por dispositivo
+query = """
+SELECT ld.*
+FROM Lecturas_Dispositivo ld
+INNER JOIN (
+    SELECT DispositivoID, MAX(LecturaID) AS UltimaLectura
+    FROM Lecturas_Dispositivo
+    GROUP BY DispositivoID
+) sub ON ld.DispositivoID = sub.DispositivoID AND ld.LecturaID = sub.UltimaLectura;
+"""
 
-        # Leer última lectura
-        df = pd.read_sql("SELECT * FROM Lecturas_Dispositivo ORDER BY fecha DESC LIMIT 1", conn_lecturas)
-        conn_lecturas.close()
+cursor.execute(query)
+lecturas = cursor.fetchall()
 
-        if df.empty:
-            print("No hay lecturas disponibles.")
-            return
+resultados = []
 
-        lectura = df.iloc[0]
-        x, y, z, magnitud = lectura["X"], lectura["Y"], lectura["Z"], lectura["Magnitud"]
+for lectura in lecturas:
+    dispositivo_id = lectura['DispositivoID']
+    lectura_id = lectura['LecturaID']
+    x = lectura['Coordenada_X']
+    y = lectura['Coordenada_Y']
+    z = lectura['Coordenada_Z']
+    magnitud = float(lectura['Nivel'])
 
-        # Cargar modelo
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError("Modelo RandomForest no encontrado.")
+    df = pd.DataFrame([{
+        'X': x,
+        'Y': y,
+        'Z': z,
+        'Magnitud': magnitud
+    }])
 
-        with open(MODEL_PATH, "rb") as f:
-            model = pickle.load(f)
+    prediccion = model.predict(df)[0]
+    porcentaje = max(0, min(100, (prediccion / 30) * 100))
 
-        input_df = pd.DataFrame([{
-            "X": x,
-            "Y": y,
-            "Z": z,
-            "Magnitud": magnitud
-        }])
+    resultados.append((dispositivo_id, lectura_id, magnitud, round(porcentaje, 2), datetime.now()))
 
-        predicted_days = model.predict(input_df)[0]
-        porcentaje = max(0, min(100, (predicted_days / 30) * 100))
+# Guardar predicciones
+insert_query = """
+INSERT INTO Resultados_Lecturas (DispositivoID, LecturaID, magnitud, Resultado, Fecha)
+VALUES (%s, %s, %s, %s, %s)
+"""
 
-        # Conectar a la base de datos de resultados
-        conn_resultados = pymysql.connect(
-            host=DB_CONFIG["host"],
-            user=DB_CONFIG["montse"],
-            password=DB_CONFIG["123456"],
-            database=DB_CONFIG["database_resultados"]
-        )
+cursor.executemany(insert_query, resultados)
+conn.commit()
 
-        cursor = conn_resultados.cursor()
-        insert_query = """
-            INSERT INTO Resultados_Lecturas (fecha, porcentaje_restante, dias_estimados)
-            VALUES (%s, %s, %s)
-        """
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute(insert_query, (now, custom_round(porcentaje), custom_round(predicted_days)))
-        conn_resultados.commit()
-        cursor.close()
-        conn_resultados.close()
-
-        print("Predicción guardada con éxito.")
-
-    except Exception as e:
-        print(f"Error durante la predicción: {e}")
-
-if __name__ == "__main__":
-    predict_and_save()
+cursor.close()
+conn.close()

@@ -88,5 +88,56 @@ def get_gas_info():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/grafica-consumo', methods=['GET'])
+def grafica_consumo():
+    usuario_id = request.args.get('usuario_id', type=int)
+
+    if not usuario_id:
+        return jsonify({"error": "Falta el parámetro usuario_id"}), 400
+
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        cursor = conn.cursor(dictionary=True)
+
+        # Obtener el dispositivo activo del usuario
+        cursor.execute("""
+            SELECT DispositivoID
+            FROM Dispositivo_Usuario
+            WHERE UsuarioID = %s AND Status = 1
+            ORDER BY Fecha_Asignacion DESC
+            LIMIT 1
+        """, (usuario_id,))
+        dispositivo = cursor.fetchone()
+
+        if not dispositivo:
+            return jsonify({"error": "No se encontró dispositivo activo"}), 404
+
+        dispositivo_id = dispositivo["DispositivoID"]
+
+        # Recuperar los últimos 30 resultados ordenados por fecha
+        cursor.execute("""
+            SELECT Fecha, Resultado
+            FROM Resultados_Lecturas
+            WHERE DispositivoID = %s
+            ORDER BY Fecha ASC
+            LIMIT 30
+        """, (dispositivo_id,))
+        resultados = cursor.fetchall()
+
+        datos = []
+        for idx, fila in enumerate(resultados):
+            datos.append({
+                "dia": idx + 1,
+                "porcentaje": float(fila["Resultado"])
+            })
+
+        cursor.close()
+        conn.close()
+
+        return jsonify(datos)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

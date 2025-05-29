@@ -22,7 +22,6 @@ def get_gas_info():
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor(dictionary=True)
 
-        # Buscar el dispositivo activo más reciente del usuario
         cursor.execute("""
             SELECT DispositivoID, Capacidad_litros
             FROM Dispositivo_Usuario
@@ -38,7 +37,6 @@ def get_gas_info():
         dispositivo_id = dispositivo['DispositivoID']
         capacidad = float(dispositivo['Capacidad_litros'])
 
-        # Último resultado de predicción
         cursor.execute("""
             SELECT Resultado AS porcentaje, Fecha
             FROM Resultados_Lecturas
@@ -48,7 +46,6 @@ def get_gas_info():
         """, (dispositivo_id,))
         resultado = cursor.fetchone()
 
-        # Calcular promedio de consumo diario con las últimas 5 lecturas
         cursor.execute("""
             SELECT Nivel, Fecha
             FROM Lecturas_Dispositivo
@@ -74,11 +71,17 @@ def get_gas_info():
         conn.close()
 
         if resultado:
-            dias_estimados = round((resultado['porcentaje'] / 100) * capacidad / promedio_diario, 1) if promedio_diario > 0 else "+90"
+            porcentaje_actual = resultado['porcentaje']
+            fecha_lectura = resultado['Fecha'].strftime("%Y-%m-%d %H:%M:%S")
+
+            # 🚨 Corrección aquí: usar consumo mínimo si no hay histórico
+            consumo_diario_estimado = promedio_diario if promedio_diario > 0 else 1.0
+            dias_estimados = round((porcentaje_actual / 100) * capacidad / consumo_diario_estimado, 1)
+
             return jsonify({
-                "porcentaje_actual": round(resultado["porcentaje"], 1),
+                "porcentaje_actual": round(porcentaje_actual, 1),
                 "dias_restantes": dias_estimados,
-                "fecha": resultado["Fecha"].strftime("%Y-%m-%d %H:%M:%S"),
+                "fecha": fecha_lectura,
                 "promedio_diario": round(promedio_diario, 2),
                 "capacidad_tanque": capacidad
             })
@@ -100,7 +103,6 @@ def grafica_consumo():
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor(dictionary=True)
 
-        # Obtener el dispositivo activo del usuario
         cursor.execute("""
             SELECT DispositivoID
             FROM Dispositivo_Usuario
@@ -115,7 +117,6 @@ def grafica_consumo():
 
         dispositivo_id = dispositivo["DispositivoID"]
 
-        # Obtener los últimos 30 resultados (orden cronológico)
         cursor.execute("""
             SELECT Fecha, Resultado
             FROM Resultados_Lecturas
@@ -133,7 +134,6 @@ def grafica_consumo():
                 ultimo_porcentaje = porcentaje
             else:
                 porcentaje = ultimo_porcentaje if ultimo_porcentaje is not None else 0
-
             datos.append({
                 "dia": idx + 1,
                 "porcentaje": porcentaje

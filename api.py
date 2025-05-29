@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request
 import mysql.connector
-from datetime import datetime, timedelta
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -22,7 +22,7 @@ def get_gas_info():
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor(dictionary=True)
 
-        # 1. Buscar el dispositivo activo más reciente del usuario
+        # Buscar el dispositivo activo más reciente del usuario
         cursor.execute("""
             SELECT DispositivoID, Capacidad_litros
             FROM Dispositivo_Usuario
@@ -38,7 +38,7 @@ def get_gas_info():
         dispositivo_id = dispositivo['DispositivoID']
         capacidad = float(dispositivo['Capacidad_litros'])
 
-        # 2. Último resultado de predicción
+        # Último resultado de predicción
         cursor.execute("""
             SELECT Resultado AS porcentaje, Fecha
             FROM Resultados_Lecturas
@@ -48,7 +48,7 @@ def get_gas_info():
         """, (dispositivo_id,))
         resultado = cursor.fetchone()
 
-        # 3. Calcular promedio de consumo diario con las últimas 5 lecturas
+        # Calcular promedio de consumo diario con las últimas 5 lecturas
         cursor.execute("""
             SELECT Nivel, Fecha
             FROM Lecturas_Dispositivo
@@ -61,9 +61,9 @@ def get_gas_info():
         promedio_diario = 0
         if len(lecturas) >= 2:
             consumos = []
-            for i in range(len(lecturas)-1):
+            for i in range(len(lecturas) - 1):
                 nivel_actual = float(lecturas[i]['Nivel'])
-                nivel_anterior = float(lecturas[i+1]['Nivel'])
+                nivel_anterior = float(lecturas[i + 1]['Nivel'])
                 consumo = nivel_anterior - nivel_actual
                 if consumo > 0:
                     consumos.append(consumo)
@@ -87,6 +87,7 @@ def get_gas_info():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route('/grafica-consumo', methods=['GET'])
 def grafica_consumo():
@@ -114,7 +115,7 @@ def grafica_consumo():
 
         dispositivo_id = dispositivo["DispositivoID"]
 
-        # Recuperar los últimos 30 resultados ordenados por fecha
+        # Obtener los últimos 30 resultados (orden cronológico)
         cursor.execute("""
             SELECT Fecha, Resultado
             FROM Resultados_Lecturas
@@ -125,10 +126,17 @@ def grafica_consumo():
         resultados = cursor.fetchall()
 
         datos = []
-        for idx, fila in enumerate(resultados):
+        ultimo_porcentaje = None
+        for idx in range(30):
+            if idx < len(resultados):
+                porcentaje = float(resultados[idx]["Resultado"])
+                ultimo_porcentaje = porcentaje
+            else:
+                porcentaje = ultimo_porcentaje if ultimo_porcentaje is not None else 0
+
             datos.append({
                 "dia": idx + 1,
-                "porcentaje": float(fila["Resultado"])
+                "porcentaje": porcentaje
             })
 
         cursor.close()
@@ -138,6 +146,7 @@ def grafica_consumo():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

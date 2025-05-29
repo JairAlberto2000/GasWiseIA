@@ -51,24 +51,37 @@ for lectura in lecturas:
         WHERE DispositivoID = %s AND UsuarioID = %s
         LIMIT 1;
     """, (dispositivo_id, usuario_id))
-
     validacion = cursor.fetchone()
 
     if not validacion:
         print(f"Dispositivo {dispositivo_id} no pertenece al usuario {usuario_id}. Se omite.")
         continue
 
+    # Generar predicción
     df = pd.DataFrame([{
         'X': x,
         'Y': y,
         'Z': z,
         'Magnitud': magnitud
     }])
-
     prediccion = model.predict(df)[0]
-    porcentaje = max(0, min(100, (prediccion / 30) * 100))
+    porcentaje = round(max(0, min(100, (prediccion / 30) * 100)), 2)
 
-    resultados.append((dispositivo_id, lectura_id, magnitud, round(porcentaje, 2), datetime.now()))
+    # Consultar el último resultado para comparar
+    cursor.execute("""
+        SELECT Resultado FROM Resultados_Lecturas
+        WHERE DispositivoID = %s
+        ORDER BY Fecha DESC
+        LIMIT 1;
+    """, (dispositivo_id,))
+    ultimo = cursor.fetchone()
+
+    if ultimo and round(ultimo['Resultado'], 2) == porcentaje:
+        print(f"🔁 Porcentaje igual al anterior ({porcentaje}%), no se guarda para dispositivo {dispositivo_id}.")
+        continue  # No insertar si el valor no ha cambiado
+
+    # Agregar a lista de inserción
+    resultados.append((dispositivo_id, lectura_id, magnitud, porcentaje, datetime.now()))
 
 # Guardar predicciones válidas
 if resultados:
@@ -78,9 +91,9 @@ if resultados:
     """
     cursor.executemany(insert_query, resultados)
     conn.commit()
-    print(f"{len(resultados)} resultados guardados.")
+    print(f"✅ {len(resultados)} resultados guardados.")
 else:
-    print("No se generaron predicciones válidas.")
+    print("⚠️ No se generaron nuevas predicciones (sin cambios).")
 
 cursor.close()
 conn.close()

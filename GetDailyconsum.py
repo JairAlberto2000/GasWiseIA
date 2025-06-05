@@ -1,32 +1,51 @@
-
+import mysql.connector
 import pandas as pd
+from datetime import datetime
 
-def gdc():
-    # Cargar datos
-    df = pd.read_csv("datasets/datos_procesados.csv")
+def calcular_consumo_diario():
+    # Configuración de conexión
+    db_config = {
+        'host': 'localhost',
+        'user': 'montse',
+        'password': '123456',
+        'database': 'DBGasWise'
+    }
 
-    # Asegúrate que Date esté en formato de fecha
-    df["Date"] = pd.to_datetime(df["Date"])
+    conn = mysql.connector.connect(**db_config)
+    cursor = conn.cursor(dictionary=True)
 
-    # Agrupar por día y tomar la magnitud máxima y mínima de cada día
-    diario = df.groupby(df["Date"].dt.date)["Magnitud"].agg(["max", "min"])
-    diario["Consumo_dia_magnitudes"] = diario["max"] - diario["min"]
+    # Obtener lecturas con fecha y nivel
+    cursor.execute("""
+        SELECT Fecha, Nivel
+        FROM Lecturas_Dispositivo
+        WHERE Nivel > 0
+        ORDER BY Fecha ASC
+    """)
+    resultados = cursor.fetchall()
 
-    # Convertir a litros (usando la relación 10 magnitudes = 1 litro)
-    diario["Consumo_dia_litros"] = diario["Consumo_dia_magnitudes"] / 10
+    cursor.close()
+    conn.close()
 
-    # Calcular el promedio diario
-    consumo_prom_litros = diario["Consumo_dia_litros"].mean()
+    if not resultados or len(resultados) < 2:
+        print("No hay suficientes datos para calcular consumo.")
+        return 0
 
-    # Y ahora convertir eso a porcentaje del tanque (de 300 L)
-    consumo_prom_porcentaje = (consumo_prom_litros / 300) * 100
-    
-    # Mostrar resultados
-    print(f"Consumo promedio por día: {consumo_prom_litros:.2f} litros ({consumo_prom_porcentaje:.2f}%)")
-    
-    df["Gas_%"] = (df["Magnitud"] - 112000) / (115000 - 112000) * 100
-    df["Dias Restantes"] = df["Gas_%"] / consumo_prom_porcentaje
+    # Convertir a DataFrame
+    df = pd.DataFrame(resultados)
+    df["Fecha"] = pd.to_datetime(df["Fecha"])
+    df["Nivel"] = df["Nivel"].astype(float)
 
-    df.to_csv("datasets/datos_procesados.csv", index=False)
-    
-    return consumo_prom_porcentaje
+    # Agrupar por día y calcular consumo
+    diario = df.groupby(df["Fecha"].dt.date)["Nivel"].agg(["max", "min"])
+    diario["consumo_diario_litros"] = diario["max"] - diario["min"]
+
+    # Calcular promedio (solo si hay consumo positivo)
+    consumos_validos = diario[diario["consumo_diario_litros"] > 0]
+    promedio_litros = consumos_validos["consumo_diario_litros"].mean()
+
+    # Convertir a porcentaje (tanque de 300 L)
+    promedio_porcentaje = (promedio_litros / 300) * 100
+
+    print(f"📊 Promedio diario: {promedio_litros:.2f} litros ({promedio_porcentaje:.2f}%)")
+
+    return promedio_litros

@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 import mysql.connector
 from datetime import datetime
+from GetDailyconsum import calcular_consumo_diario  # 👈 Se importa aquí
 
 app = Flask(__name__)
 
@@ -46,37 +47,21 @@ def get_gas_info():
         """, (dispositivo_id,))
         resultado = cursor.fetchone()
 
-        cursor.execute("""
-            SELECT Nivel, Fecha
-            FROM Lecturas_Dispositivo
-            WHERE DispositivoID = %s
-            ORDER BY Fecha DESC
-            LIMIT 5
-        """, (dispositivo_id,))
-        lecturas = cursor.fetchall()
-
-        promedio_diario = 0
-        if len(lecturas) >= 2:
-            consumos = []
-            for i in range(len(lecturas) - 1):
-                nivel_actual = float(lecturas[i]['Nivel'])
-                nivel_anterior = float(lecturas[i + 1]['Nivel'])
-                consumo = nivel_anterior - nivel_actual
-                if consumo > 0:
-                    consumos.append(consumo)
-            if consumos:
-                promedio_diario = sum(consumos) / len(consumos)
-
         cursor.close()
         conn.close()
+
+        # 👉 Obtener promedio desde IA
+        promedio_diario = calcular_consumo_diario()
 
         if resultado:
             porcentaje_actual = resultado['porcentaje']
             fecha_lectura = resultado['Fecha'].strftime("%Y-%m-%d %H:%M:%S")
 
-            # 🚨 Corrección aquí: usar consumo mínimo si no hay histórico
-            consumo_diario_estimado = promedio_diario if promedio_diario > 0 else 1.0
-            dias_estimados = round((porcentaje_actual / 100) * capacidad / consumo_diario_estimado, 1)
+            # Si el promedio es válido, calcular los días
+            if promedio_diario > 0:
+                dias_estimados = round((porcentaje_actual / 100) * capacidad / promedio_diario, 1)
+            else:
+                dias_estimados = 0  # No mostrar "+90", sino que forzamos a 0 si no hay base
 
             return jsonify({
                 "porcentaje_actual": round(porcentaje_actual, 1),
